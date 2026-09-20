@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light Theme (Blue/White tones) */
+    --bg-color: #F8FAFC;
+    --surface-color: rgba(255, 255, 255, 0.85);
+    --element-bg: #E2E8F0;
+    --element-hover: #CBD5E1;
+    --danger-bg: #FEE2E2;
+    --danger-text: #EF4444;
+    --primary-color: #3B82F6;
+    --primary-dark-color: #2563EB;
+    --primary-text: #FFFFFF;
+    --secondary-color: #06B6D4;
+    --text-main: #0F172A;
+    --text-muted: #64748B;
+    --border-color: rgba(148, 163, 184, 0.3);
+    --primary-color-transparent: rgba(59, 130, 246, 0.2);
+    --primary-color-glow: rgba(59, 130, 246, 0.6);
+  }
+
+  .dark {
+    /* Dark Theme (Deep Blue tones) */
+    --bg-color: #070B19;
+    --surface-color: rgba(15, 23, 42, 0.75);
+    --element-bg: #1E293B;
+    --element-hover: #334155;
+    --danger-bg: rgba(239, 68, 68, 0.15);
+    --danger-text: #F87171;
+    --primary-color: #38BDF8;
+    --primary-dark-color: #0284C7;
+    --primary-text: #000000;
+    --secondary-color: #818CF8;
+    --text-main: #F1F5F9;
+    --text-muted: #94A3B8;
+    --border-color: rgba(56, 189, 248, 0.15);
+    --primary-color-transparent: rgba(56, 189, 248, 0.2);
+    --primary-color-glow: rgba(56, 189, 248, 0.6);
+  }
+
+  body {
+    @apply bg-background text-textMain antialiased font-sans overflow-x-hidden transition-colors duration-500;
+  }
+}
+
+/* Base body background fallback for gradients */
+body {
+  background-image: radial-gradient(circle at 15% 50%, var(--primary-color-transparent), transparent 25%),
+                    radial-gradient(circle at 85% 30%, rgba(129, 140, 248, 0.08), transparent 25%);
+  background-color: var(--bg-color);
+  background-size: 100% 100%;
+  background-attachment: fixed;
+}
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-color);
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  @apply bg-[var(--surface-color)] backdrop-blur-2xl border border-[var(--border-color)] shadow-xl transition-colors duration-500;
+}
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary;
+}

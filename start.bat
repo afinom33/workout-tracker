@@ -1,0 +1,3 @@
+@echo off
+echo Starting Workout Tracker...
+node server.js
