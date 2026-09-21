@@ -91,42 +91,49 @@ const ProgressCharts: React.FC = () => {
           </div>
 
           <div className="glass-panel p-5 rounded-3xl h-[400px]">
-            {chartData.length < 2 ? (
+            {chartData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-textMuted text-center p-4">
-                Нужно хотя бы 2 тренировки с этим упражнением для построения графика.
+                Нет завершенных подходов для этого упражнения.
+              </div>
+            ) : chartData.length === 1 ? (
+              <div className="h-full flex flex-col items-center justify-center text-textMuted text-center p-4">
+                <div className="text-4xl font-bold text-primary mb-2">
+                  {chartData[0][metric]} кг
+                </div>
+                <div>Единственная тренировка. Добавьте еще одну, чтобы увидеть график прогресса!</div>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a35" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
                   <XAxis 
                     dataKey="dateStr" 
-                    stroke="#A0A0B0" 
+                    stroke="var(--text-muted)" 
                     fontSize={12} 
                     tickLine={false} 
                     axisLine={false}
                     dy={10}
                   />
                   <YAxis 
-                    stroke="#A0A0B0" 
+                    stroke="var(--text-muted)" 
                     fontSize={12} 
                     tickLine={false} 
                     axisLine={false}
                     dx={-10}
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1A1A24', border: '1px solid #333', borderRadius: '12px', color: '#fff' }}
-                    itemStyle={{ color: '#39FF14', fontWeight: 'bold' }}
+                    contentStyle={{ backgroundColor: 'var(--surface-color)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-main)' }}
+                    itemStyle={{ color: 'var(--primary-color)', fontWeight: 'bold' }}
                     formatter={(value: number) => [value + (metric === 'maxWeight' ? ' кг' : ' кг'), metric === 'maxWeight' ? 'Макс. вес' : 'Объем']}
-                    labelStyle={{ color: '#A0A0B0', marginBottom: '4px' }}
+                    labelStyle={{ color: 'var(--text-muted)', marginBottom: '4px' }}
                   />
                   <Line 
                     type="monotone" 
                     dataKey={metric} 
-                    stroke="#39FF14" 
+                    stroke="var(--primary-color)" 
                     strokeWidth={4} 
-                    dot={{ r: 6, fill: '#0B0B0F', stroke: '#39FF14', strokeWidth: 2 }}
-                    activeDot={{ r: 8, fill: '#39FF14', stroke: '#fff', strokeWidth: 2 }}
+                    dot={{ r: 6, fill: 'var(--bg-color)', stroke: 'var(--primary-color)', strokeWidth: 2 }}
+                    activeDot={{ r: 8, fill: 'var(--primary-color)', stroke: '#fff', strokeWidth: 2 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
