@@ -30,17 +30,19 @@ const ProgressCharts: React.FC = () => {
     const data: any[] = [];
     sessions.forEach(session => {
       const entry = session.entries.find(e => e.exerciseId === selectedExerciseId);
-      if (entry && entry.sets.some(s => s.completed)) {
-        const completedSets = entry.sets.filter(s => s.completed);
-        const maxWeight = Math.max(...completedSets.map(s => s.weight));
-        const volume = completedSets.reduce((acc, s) => acc + (s.weight * s.reps), 0);
-        
-        data.push({
-          date: new Date(session.date).getTime(),
-          dateStr: format(new Date(session.date), 'dd MMM', { locale: ru }),
-          maxWeight,
-          volume
-        });
+      if (entry) {
+        const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
+        if (validSets.length > 0) {
+          const maxWeight = Math.max(...validSets.map(s => s.weight));
+          const volume = validSets.reduce((acc, s) => acc + (s.weight * s.reps), 0);
+          
+          data.push({
+            date: new Date(session.date).getTime(),
+            dateStr: format(new Date(session.date), 'dd MMM', { locale: ru }),
+            maxWeight,
+            volume
+          });
+        }
       }
     });
 
