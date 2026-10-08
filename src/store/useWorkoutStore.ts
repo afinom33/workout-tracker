@@ -210,9 +210,14 @@ export const useWorkoutStore = create<WorkoutState>()(
           if (entry && entry.sets.length > 0) {
             const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
             if (validSets.length > 0) {
-              const maxWeight = Math.max(...validSets.map(s => s.weight));
-              const maxReps = Math.max(...validSets.map(s => s.reps));
-              return { maxWeight, maxReps };
+              // Find the set with the highest weight. If weights are equal, prefer higher reps.
+              const bestSet = validSets.reduce((best, current) => {
+                if (current.weight > best.weight) return current;
+                if (current.weight === best.weight && current.reps > best.reps) return current;
+                return best;
+              }, validSets[0]);
+
+              return { maxWeight: bestSet.weight, maxReps: bestSet.reps };
             }
           }
         }

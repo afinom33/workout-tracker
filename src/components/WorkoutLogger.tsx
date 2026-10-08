@@ -14,9 +14,9 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
   const currentSession = useWorkoutStore((state) => state.currentSession);
   const endSession = useWorkoutStore((state) => state.endSession);
   const exercises = useWorkoutStore((state) => state.exercises);
-  const sessions = useWorkoutStore((state) => state.sessions);
   const addEntryToSession = useWorkoutStore((state) => state.addEntryToSession);
   const addExercise = useWorkoutStore((state) => state.addExercise);
+  const getLastPerformance = useWorkoutStore((state) => state.getLastPerformance);
   
   const [showExerciseSelector, setShowExerciseSelector] = useState(false);
   const [activeMuscleGroup, setActiveMuscleGroup] = useState<MuscleGroup | 'Все'>('Все');
@@ -68,18 +68,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
 
   // Get last performance info for exercise selector
   const getLastInfo = (exId: string) => {
-    for (let i = sessions.length - 1; i >= 0; i--) {
-      const entry = sessions[i].entries.find(e => e.exerciseId === exId);
-      if (entry && entry.sets.length > 0) {
-        const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
-        if (validSets.length > 0) {
-          const maxWeight = Math.max(...validSets.map(s => s.weight));
-          const maxReps = Math.max(...validSets.map(s => s.reps));
-          return { maxWeight, maxReps };
-        }
-      }
-    }
-    return null;
+    return getLastPerformance(exId);
   };
 
   return (
