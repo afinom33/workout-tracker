@@ -44,6 +44,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onStartWorkout }) => {
     }
   };
 
+  const [selectedSession, setSelectedSession] = useState<typeof sessions[0] | null>(null);
+
   const recentSessions = [...sessions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3);
 
   return (
@@ -182,9 +184,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onStartWorkout }) => {
         ) : (
           <div className="space-y-4">
             {recentSessions.map(session => (
-              <div key={session.id} className="glass-panel p-5 rounded-3xl flex justify-between items-center">
+              <button 
+                key={session.id}
+                onClick={() => setSelectedSession(session)}
+                className="w-full text-left glass-panel p-5 rounded-3xl flex justify-between items-center transition-transform hover:scale-[1.02] hover:bg-white/5"
+              >
                 <div>
-                  <div className="font-bold text-lg">Тренировка</div>
+                  <div className="font-bold text-lg text-textMain">Тренировка</div>
                   <div className="text-sm text-textMuted">
                     {formatDistanceToNow(new Date(session.date), { addSuffix: true, locale: ru })}
                   </div>
@@ -193,12 +199,69 @@ const Dashboard: React.FC<DashboardProps> = ({ onStartWorkout }) => {
                   <div className="font-bold text-primary">{session.entries.length} упр.</div>
                   <div className="text-sm text-textMuted">{session.durationMinutes} мин</div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
       </div>
 
+      {/* Session Details Modal */}
+      {selectedSession && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-background border border-panelBorder w-full max-w-md max-h-[85vh] flex flex-col rounded-3xl overflow-hidden slide-in-from-bottom-10 sm:slide-in-from-bottom-0 sm:zoom-in-95">
+            <div className="p-5 border-b border-panelBorder flex justify-between items-center sticky top-0 bg-background/95 backdrop-blur z-10">
+              <div>
+                <h3 className="font-bold text-xl text-textMain">Детали тренировки</h3>
+                <div className="text-xs text-textMuted mt-0.5">
+                  {new Date(selectedSession.date).toLocaleString('ru-RU')} • {selectedSession.durationMinutes} мин
+                </div>
+              </div>
+              <button onClick={() => setSelectedSession(null)} className="p-2 bg-element hover:bg-elementHover rounded-full transition-colors text-textMuted">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+            
+            <div className="p-5 overflow-y-auto flex-1 space-y-6">
+              {selectedSession.entries.length === 0 ? (
+                <div className="text-center text-textMuted py-8">Нет данных об упражнениях</div>
+              ) : (
+                selectedSession.entries.map((entry, idx) => {
+                  const ex = useWorkoutStore.getState().exercises.find(e => e.id === entry.exerciseId);
+                  const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
+                  
+                  return (
+                    <div key={entry.id} className="bg-element/50 rounded-2xl p-4">
+                      <div className="font-bold text-primary mb-3 text-lg flex items-center gap-2">
+                        <span className="text-textMuted text-sm">{idx + 1}.</span> 
+                        {ex?.name || 'Удаленное упражнение'}
+                      </div>
+                      
+                      {validSets.length === 0 ? (
+                        <div className="text-sm text-textMuted">Нет завершенных подходов</div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-[30px_1fr_1fr] text-xs text-textMuted uppercase tracking-wider font-bold text-center mb-1">
+                            <span>#</span>
+                            <span>Вес</span>
+                            <span>Повт</span>
+                          </div>
+                          {validSets.map((set, sIdx) => (
+                            <div key={set.id} className="grid grid-cols-[30px_1fr_1fr] text-sm font-medium items-center text-center py-1.5 bg-background rounded-lg">
+                              <span className="text-textMuted">{sIdx + 1}</span>
+                              <span className="text-textMain">{set.weight} кг</span>
+                              <span className="text-textMain">{set.reps}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
