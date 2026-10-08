@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Activity, Dumbbell, LineChart, Settings } from 'lucide-react';
+import { Activity, Dumbbell, LineChart, Settings, ListChecks } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import WorkoutLogger from './components/WorkoutLogger';
 import ProgressCharts from './components/ProgressCharts';
 import ExportData from './components/ExportData';
+import ExerciseList from './components/ExerciseList';
 import { useWorkoutStore } from './store/useWorkoutStore';
 
 import { Moon, Sun } from 'lucide-react';
 
-type View = 'dashboard' | 'workout' | 'progress' | 'settings';
+type View = 'dashboard' | 'workout' | 'progress' | 'exercises' | 'settings';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -51,6 +52,7 @@ function App() {
           {currentView === 'dashboard' && <Dashboard onStartWorkout={() => setCurrentView('workout')} />}
           {currentView === 'workout' && <WorkoutLogger onFinish={() => setCurrentView('dashboard')} />}
           {currentView === 'progress' && <ProgressCharts />}
+          {currentView === 'exercises' && <ExerciseList />}
           {currentView === 'settings' && <ExportData />}
         </div>
       </main>
@@ -59,26 +61,32 @@ function App() {
       <nav className="fixed bottom-0 w-full glass-panel border-t-0 pb-safe z-50">
         <div className="max-w-3xl mx-auto flex justify-around p-3 relative">
           <NavItem 
-            icon={<Activity size={24} />} 
+            icon={<Activity size={22} />} 
             label="Обзор" 
             isActive={currentView === 'dashboard'} 
             onClick={() => handleNavigation('dashboard')} 
           />
           <NavItem 
-            icon={<Dumbbell size={24} />} 
+            icon={<Dumbbell size={22} />} 
             label="Тренировка" 
             isActive={currentView === 'workout'} 
             onClick={() => handleNavigation('workout')}
             hasIndicator={!!currentSession}
           />
           <NavItem 
-            icon={<LineChart size={24} />} 
+            icon={<ListChecks size={22} />} 
+            label="Упражнения" 
+            isActive={currentView === 'exercises'} 
+            onClick={() => handleNavigation('exercises')} 
+          />
+          <NavItem 
+            icon={<LineChart size={22} />} 
             label="Прогресс" 
             isActive={currentView === 'progress'} 
             onClick={() => handleNavigation('progress')} 
           />
           <NavItem 
-            icon={<Settings size={24} />} 
+            icon={<Settings size={22} />} 
             label="Настройки" 
             isActive={currentView === 'settings'} 
             onClick={() => handleNavigation('settings')} 
@@ -101,7 +109,7 @@ function NavItem({ icon, label, isActive, onClick, hasIndicator }: { icon: React
         <span className="absolute top-1 right-1/4 w-2 h-2 bg-primary rounded-full animate-pulse"></span>
       )}
       {icon}
-      <span className="text-xs mt-1 font-medium">{label}</span>
+      <span className="text-[10px] mt-1 font-medium">{label}</span>
     </button>
   );
 }

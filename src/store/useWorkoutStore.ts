@@ -11,12 +11,19 @@ interface WorkoutState {
   
   // Actions
   addExercise: (name: string, muscleGroup: MuscleGroup) => string;
+  renameExercise: (id: string, newName: string) => void;
+  updateExerciseGroup: (id: string, newGroup: MuscleGroup) => void;
+  deleteExercise: (id: string) => void;
   startSession: () => void;
   endSession: (duration: number) => void;
   addEntryToSession: (exerciseId: string, setsCount?: number) => void;
+  removeEntryFromSession: (entryId: string) => void;
   updateSet: (entryId: string, setId: string, weight: number, reps: number, completed: boolean) => void;
   addSetToEntry: (entryId: string) => void;
   removeSetFromEntry: (entryId: string, setId: string) => void;
+  
+  // Helpers
+  getLastPerformance: (exerciseId: string) => { maxWeight: number; maxReps: number } | null;
   
   // Goal Management
   setGoal: (type: GoalType, startWeight: number, endDate?: string) => void;
@@ -51,6 +58,18 @@ export const useWorkoutStore = create<WorkoutState>()(
         }));
         return id;
       },
+
+      renameExercise: (id, newName) => set((state) => ({
+        exercises: state.exercises.map(ex => ex.id === id ? { ...ex, name: newName } : ex)
+      })),
+
+      updateExerciseGroup: (id, newGroup) => set((state) => ({
+        exercises: state.exercises.map(ex => ex.id === id ? { ...ex, muscleGroup: newGroup } : ex)
+      })),
+
+      deleteExercise: (id) => set((state) => ({
+        exercises: state.exercises.filter(ex => ex.id !== id)
+      })),
 
       startSession: () => set(() => ({
         currentSession: {
@@ -131,6 +150,16 @@ export const useWorkoutStore = create<WorkoutState>()(
         };
       }),
 
+      removeEntryFromSession: (entryId) => set((state) => {
+        if (!state.currentSession) return state;
+        return {
+          currentSession: {
+            ...state.currentSession,
+            entries: state.currentSession.entries.filter(e => e.id !== entryId)
+          }
+        };
+      }),
+
       addSetToEntry: (entryId) => set((state) => {
         if (!state.currentSession) return state;
         const entries = state.currentSession.entries.map(entry => {
@@ -173,6 +202,22 @@ export const useWorkoutStore = create<WorkoutState>()(
         });
         return { currentSession: { ...state.currentSession, entries } };
       }),
+
+      getLastPerformance: (exerciseId) => {
+        const state = get();
+        for (let i = state.sessions.length - 1; i >= 0; i--) {
+          const entry = state.sessions[i].entries.find(e => e.exerciseId === exerciseId);
+          if (entry && entry.sets.length > 0) {
+            const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
+            if (validSets.length > 0) {
+              const maxWeight = Math.max(...validSets.map(s => s.weight));
+              const maxReps = Math.max(...validSets.map(s => s.reps));
+              return { maxWeight, maxReps };
+            }
+          }
+        }
+        return null;
+      },
 
       setGoal: (type, startWeight, endDate) => set(() => ({
         activeGoal: {

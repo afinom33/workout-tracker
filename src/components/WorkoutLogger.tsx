@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useWorkoutStore } from '../store/useWorkoutStore';
-import { Check, Plus, Trash2, X } from 'lucide-react';
+import { Check, Plus, Trash2, X, ChevronUp } from 'lucide-react';
 import clsx from 'clsx';
 import { MuscleGroup } from '../types';
 
@@ -14,6 +14,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
   const currentSession = useWorkoutStore((state) => state.currentSession);
   const endSession = useWorkoutStore((state) => state.endSession);
   const exercises = useWorkoutStore((state) => state.exercises);
+  const sessions = useWorkoutStore((state) => state.sessions);
   const addEntryToSession = useWorkoutStore((state) => state.addEntryToSession);
   const addExercise = useWorkoutStore((state) => state.addExercise);
   
@@ -24,7 +25,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
   const [showNewExerciseForm, setShowNewExerciseForm] = useState(false);
   const [newExName, setNewExName] = useState('');
   const [newExGroup, setNewExGroup] = useState<MuscleGroup>('Грудь');
-  const [newExSets, setNewExSets] = useState<number>(3); // Default sets
+  const [newExSets, setNewExSets] = useState<number>(3);
 
   const [startTime] = useState(Date.now()); 
 
@@ -32,7 +33,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
     return (
       <div className="flex flex-col items-center justify-center h-full pt-20">
         <p className="text-textMuted mb-4">Тренировка не начата</p>
-        <button onClick={onFinish} className="bg-primary text-black px-6 py-2 rounded-xl font-bold">
+        <button onClick={onFinish} className="bg-primary text-primaryText px-6 py-2 rounded-xl font-bold">
           Вернуться на главную
         </button>
       </div>
@@ -65,16 +66,26 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
     setShowExerciseSelector(false);
   };
 
+  // Get last performance info for exercise selector
+  const getLastInfo = (exId: string) => {
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const entry = sessions[i].entries.find(e => e.exerciseId === exId);
+      if (entry && entry.sets.length > 0) {
+        const validSets = entry.sets.filter(s => s.completed || (s.weight > 0 && s.reps > 0));
+        if (validSets.length > 0) {
+          const maxWeight = Math.max(...validSets.map(s => s.weight));
+          const maxReps = Math.max(...validSets.map(s => s.reps));
+          return { maxWeight, maxReps };
+        }
+      }
+    }
+    return null;
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in pb-10">
       <div className="flex justify-between items-center mt-4">
         <h2 className="text-2xl font-bold">Тренировка</h2>
-        <button 
-          onClick={handleFinish}
-          className="text-dangerText font-bold border border-danger/50 bg-danger/20 px-4 py-2 rounded-xl hover:bg-danger/40 transition-colors"
-        >
-          Завершить
-        </button>
       </div>
 
       {currentSession.entries.length === 0 ? (
@@ -140,16 +151,26 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
                 </div>
               ) : (
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-2 mb-4">
-                  {filteredExercises.map(ex => (
-                    <button
-                      key={ex.id}
-                      onClick={() => handleSelectExisting(ex.id)}
-                      className="w-full text-left bg-element p-3 rounded-xl hover:bg-elementHover flex justify-between items-center transition-colors border border-transparent hover:border-primary/50 text-textMain"
-                    >
-                      <span className="font-medium">{ex.name}</span>
-                      <span className="text-xs text-secondary bg-secondary/10 px-2 py-1 rounded-md">{ex.muscleGroup}</span>
-                    </button>
-                  ))}
+                  {filteredExercises.map(ex => {
+                    const lastInfo = getLastInfo(ex.id);
+                    return (
+                      <button
+                        key={ex.id}
+                        onClick={() => handleSelectExisting(ex.id)}
+                        className="w-full text-left bg-element p-3 rounded-xl hover:bg-elementHover flex justify-between items-center transition-colors border border-transparent hover:border-primary/50 text-textMain"
+                      >
+                        <div>
+                          <span className="font-medium">{ex.name}</span>
+                          {lastInfo && (
+                            <div className="text-xs text-textMuted mt-0.5">
+                              Прошлый: {lastInfo.maxWeight} кг × {lastInfo.maxReps} повт.
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-xs text-secondary bg-secondary/10 px-2 py-1 rounded-md">{ex.muscleGroup}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               
@@ -207,6 +228,17 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
           )}
         </div>
       )}
+
+      {/* Finish button at the bottom */}
+      {currentSession.entries.length > 0 && (
+        <button 
+          onClick={handleFinish}
+          className="w-full bg-dangerText text-white font-extrabold text-lg py-5 rounded-3xl flex items-center justify-center gap-2 active:scale-95 transition-all duration-300"
+        >
+          <Check size={24} />
+          Завершить тренировку
+        </button>
+      )}
     </div>
   );
 };
@@ -217,78 +249,113 @@ const ExerciseEntry: React.FC<{ entryId: string, exerciseId: string, index: numb
   const addSetToEntry = useWorkoutStore((state) => state.addSetToEntry);
   const updateSet = useWorkoutStore((state) => state.updateSet);
   const removeSetFromEntry = useWorkoutStore((state) => state.removeSetFromEntry);
+  const removeEntryFromSession = useWorkoutStore((state) => state.removeEntryFromSession);
+  const getLastPerformance = useWorkoutStore((state) => state.getLastPerformance);
+
+  const [collapsed, setCollapsed] = useState(false);
   
   const exercise = exercises.find(e => e.id === exerciseId);
   const entry = currentSession?.entries.find(e => e.id === entryId);
+  const lastPerf = getLastPerformance(exerciseId);
 
   if (!exercise || !entry) return null;
+
+  const handleRemoveEntry = () => {
+    if (window.confirm(`Удалить "${exercise.name}" из тренировки?`)) {
+      removeEntryFromSession(entryId);
+    }
+  };
 
   return (
     <div className="glass-panel rounded-3xl overflow-hidden mb-6">
       <div className="p-5 border-b border-white/5 bg-white/5 flex justify-between items-center">
-        <h3 className="font-bold text-xl text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">{index}. {exercise.name}</h3>
-        <span className="text-xs text-textMuted font-bold uppercase tracking-wider">{exercise.muscleGroup}</span>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <button onClick={() => setCollapsed(!collapsed)} className="text-textMuted hover:text-textMain transition-colors">
+            <ChevronUp size={20} className={clsx("transition-transform", collapsed && "rotate-180")} />
+          </button>
+          <h3 className="font-bold text-xl text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary truncate">{index}. {exercise.name}</h3>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs text-textMuted font-bold uppercase tracking-wider">{exercise.muscleGroup}</span>
+          <button 
+            onClick={handleRemoveEntry}
+            className="text-textMuted hover:text-dangerText transition-colors p-1"
+            title="Удалить упражнение"
+          >
+            <Trash2 size={18} />
+          </button>
+        </div>
       </div>
       
-      <div className="p-5">
-        <div className="grid grid-cols-[30px_1fr_1fr_40px_30px] gap-2 mb-2 text-xs font-bold text-textMuted uppercase tracking-wider text-center">
-          <span>Сет</span>
-          <span>Вес (кг)</span>
-          <span>Повт.</span>
-          <span></span>
-          <span></span>
-        </div>
-        
-        <div className="space-y-3">
-          {entry.sets.map((set, setIndex) => (
-            <div key={set.id} className={clsx("grid grid-cols-[30px_1fr_1fr_40px_30px] gap-2 items-center transition-opacity duration-300", set.completed ? "opacity-60" : "opacity-100")}>
-              <div className="text-center font-bold text-textMuted">{setIndex + 1}</div>
-              
-              <input 
-                type="number" 
-                value={set.weight || ''}
-                onChange={(e) => updateSet(entryId, set.id, parseFloat(e.target.value) || 0, set.reps, set.completed)}
-                disabled={set.completed}
-                className="bg-element border border-transparent rounded-lg p-2 text-center text-lg font-bold w-full focus:border-primary outline-none transition-colors disabled:bg-transparent disabled:border-transparent text-textMain"
-                placeholder="0"
-              />
-              
-              <input 
-                type="number" 
-                value={set.reps || ''}
-                onChange={(e) => updateSet(entryId, set.id, set.weight, parseInt(e.target.value) || 0, set.completed)}
-                disabled={set.completed}
-                className="bg-element border border-transparent rounded-lg p-2 text-center text-lg font-bold w-full focus:border-primary outline-none transition-colors disabled:bg-transparent disabled:border-transparent text-textMain"
-                placeholder="0"
-              />
-
-              <button 
-                onClick={() => updateSet(entryId, set.id, set.weight, set.reps, !set.completed)}
-                className={clsx("h-10 w-10 rounded-xl flex items-center justify-center transition-colors mx-auto", 
-                  set.completed ? "bg-primary text-primaryText" : "bg-element text-textMuted hover:bg-elementHover"
-                )}
-              >
-                <Check size={20} strokeWidth={3} />
-              </button>
-
-              <button 
-                onClick={() => removeSetFromEntry(entryId, set.id)}
-                className="text-textMuted hover:text-red-400 transition-colors mx-auto flex items-center justify-center h-full w-full"
-                disabled={set.completed}
-              >
-                {!set.completed && <Trash2 size={18} />}
-              </button>
+      {!collapsed && (
+        <div className="p-5">
+          {/* Last performance hint */}
+          {lastPerf && (
+            <div className="mb-3 bg-primary/10 border border-primary/20 rounded-xl px-3 py-2 text-xs text-primary flex items-center gap-2">
+              <span>📊</span>
+              <span>Прошлый раз: <strong>{lastPerf.maxWeight} кг</strong> × <strong>{lastPerf.maxReps} повт.</strong></span>
             </div>
-          ))}
+          )}
+
+          <div className="grid grid-cols-[30px_1fr_1fr_40px_30px] gap-2 mb-2 text-xs font-bold text-textMuted uppercase tracking-wider text-center">
+            <span>Сет</span>
+            <span>Вес (кг)</span>
+            <span>Повт.</span>
+            <span></span>
+            <span></span>
+          </div>
+          
+          <div className="space-y-3">
+            {entry.sets.map((set, setIndex) => (
+              <div key={set.id} className={clsx("grid grid-cols-[30px_1fr_1fr_40px_30px] gap-2 items-center transition-opacity duration-300", set.completed ? "opacity-60" : "opacity-100")}>
+                <div className="text-center font-bold text-textMuted">{setIndex + 1}</div>
+                
+                <input 
+                  type="number" 
+                  value={set.weight || ''}
+                  onChange={(e) => updateSet(entryId, set.id, parseFloat(e.target.value) || 0, set.reps, set.completed)}
+                  disabled={set.completed}
+                  className="bg-element border border-transparent rounded-lg p-2 text-center text-lg font-bold w-full focus:border-primary outline-none transition-colors disabled:bg-transparent disabled:border-transparent text-textMain"
+                  placeholder="0"
+                />
+                
+                <input 
+                  type="number" 
+                  value={set.reps || ''}
+                  onChange={(e) => updateSet(entryId, set.id, set.weight, parseInt(e.target.value) || 0, set.completed)}
+                  disabled={set.completed}
+                  className="bg-element border border-transparent rounded-lg p-2 text-center text-lg font-bold w-full focus:border-primary outline-none transition-colors disabled:bg-transparent disabled:border-transparent text-textMain"
+                  placeholder="0"
+                />
+
+                <button 
+                  onClick={() => updateSet(entryId, set.id, set.weight, set.reps, !set.completed)}
+                  className={clsx("h-10 w-10 rounded-xl flex items-center justify-center transition-colors mx-auto", 
+                    set.completed ? "bg-primary text-primaryText" : "bg-element text-textMuted hover:bg-elementHover"
+                  )}
+                >
+                  <Check size={20} strokeWidth={3} />
+                </button>
+
+                <button 
+                  onClick={() => removeSetFromEntry(entryId, set.id)}
+                  className="text-textMuted hover:text-red-400 transition-colors mx-auto flex items-center justify-center h-full w-full"
+                  disabled={set.completed}
+                >
+                  {!set.completed && <Trash2 size={18} />}
+                </button>
+              </div>
+            ))}
+          </div>
+          
+          <button 
+            onClick={() => addSetToEntry(entryId)}
+            className="mt-4 w-full py-2 text-sm text-textMuted hover:text-textMain font-medium flex justify-center items-center gap-1 transition-colors"
+          >
+            <Plus size={16} /> Добавить подход
+          </button>
         </div>
-        
-        <button 
-          onClick={() => addSetToEntry(entryId)}
-          className="mt-4 w-full py-2 text-sm text-textMuted hover:text-textMain font-medium flex justify-center items-center gap-1 transition-colors"
-        >
-          <Plus size={16} /> Добавить подход
-        </button>
-      </div>
+      )}
     </div>
   );
 };
