@@ -31,6 +31,7 @@ interface WorkoutState {
 
   // Data Management
   exportData: () => string;
+  exportCsv: () => string;
   importData: (jsonData: string) => boolean;
   resetData: () => void;
   
@@ -254,6 +255,66 @@ export const useWorkoutStore = create<WorkoutState>()(
           activeGoal: state.activeGoal
         };
         return JSON.stringify(data, null, 2);
+      },
+
+      exportCsv: () => {
+        const state = get();
+        const exerciseNames = new Map(state.exercises.map((ex) => [ex.id, ex.name]));
+        const exerciseGroups = new Map(state.exercises.map((ex) => [ex.id, ex.muscleGroup]));
+
+        const header = [
+          'Дата',
+          'Время',
+          'Длительность (мин)',
+          'Упражнение',
+          'Группа мышц',
+          'Подход',
+          'Вес (кг)',
+          'Повторы',
+          'Выполнен',
+          'Объём (кг)',
+        ];
+
+        const escapeCell = (value: string) =>
+          /[";\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+
+        // Русская локаль Excel ждёт запятую в дробных числах (иначе число станет текстом).
+        const num = (value: number) => String(value).replace('.', ',');
+
+        const rows: string[][] = [header];
+
+        const sortedSessions = [...state.sessions].sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+
+        sortedSessions.forEach((session) => {
+          const sessionDate = new Date(session.date);
+          const dateStr = sessionDate.toLocaleDateString('ru-RU');
+          const timeStr = sessionDate.toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+
+          session.entries.forEach((entry) => {
+            entry.sets.forEach((set, index) => {
+              rows.push([
+                dateStr,
+                timeStr,
+                String(session.durationMinutes),
+                exerciseNames.get(entry.exerciseId) ?? 'Удалённое упражнение',
+                exerciseGroups.get(entry.exerciseId) ?? '',
+                String(index + 1),
+                num(set.weight),
+                String(set.reps),
+                set.completed ? 'Да' : 'Нет',
+                num(Math.round(set.weight * set.reps)),
+              ]);
+            });
+          });
+        });
+
+        // BOM + точка с запятой, чтобы Excel с русской локалью открыл файл корректно.
+        return '\uFEFF' + rows.map((row) => row.map(escapeCell).join(';')).join('\r\n');
       },
 
       importData: (jsonData: string) => {
