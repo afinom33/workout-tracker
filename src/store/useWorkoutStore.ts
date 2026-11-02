@@ -1,10 +1,29 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Exercise, WorkoutSession, UserStats, WorkoutEntry, GoalCycle, GoalType, MuscleGroup } from '../types';
+import type {
+  Exercise,
+  WorkoutSession,
+  UserStats,
+  WorkoutEntry,
+  GoalCycle,
+  GoalType,
+  MuscleGroup,
+  WorkoutPlan,
+} from '../types';
+import { normalizeExerciseName, normalizePlanName } from '../utils/workoutPlanCsv.ts';
+import type { ParsedWorkoutPlan } from '../utils/workoutPlanCsv.ts';
+
+export type ImportPlanMode = 'replace' | 'copy';
+
+export interface ImportPlansResult {
+  imported: number;
+  createdExercises: number;
+}
 
 interface WorkoutState {
   exercises: Exercise[];
   sessions: WorkoutSession[];
+  plans: WorkoutPlan[];
   stats: UserStats;
   currentSession: WorkoutSession | null;
   activeGoal: GoalCycle | null;
@@ -21,6 +40,12 @@ interface WorkoutState {
   updateSet: (entryId: string, setId: string, weight: number, reps: number, completed: boolean) => void;
   addSetToEntry: (entryId: string) => void;
   removeSetFromEntry: (entryId: string, setId: string) => void;
+
+  // Workout plans (imported from CSV)
+  importPlans: (parsedPlans: ParsedWorkoutPlan[], modes?: Record<string, ImportPlanMode>) => ImportPlansResult;
+  startSessionFromPlan: (planId: string) => boolean;
+  updatePlan: (plan: WorkoutPlan) => void;
+  deletePlan: (planId: string) => void;
   
   // Helpers
   getLastPerformance: (exerciseId: string) => { maxWeight: number; maxReps: number } | null;
@@ -45,6 +70,7 @@ export const useWorkoutStore = create<WorkoutState>()(
     (set, get) => ({
       exercises: [],
       sessions: [],
+      plans: [],
       stats: { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
       currentSession: null,
       activeGoal: null,
@@ -225,6 +251,145 @@ export const useWorkoutStore = create<WorkoutState>()(
         return null;
       },
 
+      importPlans: (parsedPlans, modes = {}) => {
+        let imported = 0;
+        let createdExercises = 0;
+
+        set((state) => {
+          const exercises = [...state.exercises];
+          const plans = [...state.plans];
+
+          // Упражнения ищем по нормализованному имени: опечатки регистра и
+          // лишние пробелы не должны плодить дубли в истории и прогрессе.
+          const resolveExerciseId = (name: string) => {
+            const key = normalizeExerciseName(name);
+            const existing = exercises.find(
+              (exercise) => normalizeExerciseName(exercise.name) === key,
+            );
+            if (existing) return existing.id;
+
+            const created: Exercise = {
+              id: crypto.randomUUID(),
+              name: name.trim(),
+              muscleGroup: 'Своя',
+            };
+            exercises.push(created);
+            createdExercises += 1;
+            return created.id;
+          };
+
+          const takenNames = new Set(plans.map((plan) => normalizePlanName(plan.name)));
+
+          const uniqueCopyName = (name: string) => {
+            let candidate = `${name} (копия)`;
+            let counter = 2;
+            while (takenNames.has(normalizePlanName(candidate))) {
+              candidate = `${name} (копия ${counter})`;
+              counter += 1;
+            }
+            return candidate;
+          };
+
+          parsedPlans.forEach((parsed) => {
+            const builtExercises = [...parsed.exercises]
+              .sort((a, b) => a.order - b.order)
+              .map((exercise) => ({
+                id: crypto.randomUUID(),
+                exerciseId: resolveExerciseId(exercise.name),
+                order: exercise.order,
+                sets: [...exercise.sets]
+                  .sort((a, b) => a.order - b.order)
+                  .map((set) => ({
+                    id: crypto.randomUUID(),
+                    weight: set.weight,
+                    reps: set.reps,
+                    order: set.order,
+                    ...(set.note ? { note: set.note } : {}),
+                  })),
+              }));
+
+            const normalizedName = normalizePlanName(parsed.name);
+            const existingIndex = plans.findIndex(
+              (plan) => normalizePlanName(plan.name) === normalizedName,
+            );
+            const mode = modes[normalizedName];
+
+            if (mode === 'replace' && existingIndex >= 0) {
+              plans[existingIndex] = {
+                ...plans[existingIndex],
+                name: parsed.name.trim(),
+                day: parsed.day,
+                exercises: builtExercises,
+              };
+            } else {
+              let name = parsed.name.trim();
+              if (takenNames.has(normalizedName)) name = uniqueCopyName(name);
+              plans.push({
+                id: crypto.randomUUID(),
+                name,
+                day: parsed.day,
+                exercises: builtExercises,
+                createdAt: new Date().toISOString(),
+              });
+              takenNames.add(normalizePlanName(name));
+            }
+
+            imported += 1;
+          });
+
+          return { exercises, plans };
+        });
+
+        return { imported, createdExercises };
+      },
+
+      startSessionFromPlan: (planId) => {
+        const state = get();
+        const plan = state.plans.find((candidate) => candidate.id === planId);
+        if (!plan) return false;
+
+        const exerciseIds = new Set(state.exercises.map((exercise) => exercise.id));
+        const entries: WorkoutEntry[] = [...plan.exercises]
+          .sort((a, b) => a.order - b.order)
+          // Удалённое из справочника упражнение не должно ломать старт тренировки.
+          .filter((exercise) => exerciseIds.has(exercise.exerciseId))
+          .map((exercise) => ({
+            id: crypto.randomUUID(),
+            exerciseId: exercise.exerciseId,
+            sets: [...exercise.sets]
+              .sort((a, b) => a.order - b.order)
+              .map((set) => ({
+                id: crypto.randomUUID(),
+                weight: set.weight,
+                reps: set.reps,
+                completed: false,
+              })),
+          }));
+
+        if (entries.length === 0) return false;
+
+        set({
+          currentSession: {
+            id: crypto.randomUUID(),
+            date: new Date().toISOString(),
+            entries,
+            durationMinutes: 0,
+            isCompleted: false,
+            planId: plan.id,
+            planName: plan.name,
+          },
+        });
+        return true;
+      },
+
+      updatePlan: (plan) => set((state) => ({
+        plans: state.plans.map((candidate) => candidate.id === plan.id ? plan : candidate)
+      })),
+
+      deletePlan: (planId) => set((state) => ({
+        plans: state.plans.filter((plan) => plan.id !== planId)
+      })),
+
       setGoal: (type, startWeight, endDate) => set(() => ({
         activeGoal: {
           id: crypto.randomUUID(),
@@ -251,6 +416,7 @@ export const useWorkoutStore = create<WorkoutState>()(
         const data = {
           exercises: state.exercises,
           sessions: state.sessions,
+          plans: state.plans,
           stats: state.stats,
           activeGoal: state.activeGoal
         };
@@ -324,6 +490,8 @@ export const useWorkoutStore = create<WorkoutState>()(
             set({
               exercises: data.exercises,
               sessions: data.sessions,
+              // Старые экспорты без планов остаются валидными.
+              plans: Array.isArray(data.plans) ? data.plans : [],
               stats: data.stats || { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
               activeGoal: data.activeGoal || null
             });
@@ -338,13 +506,26 @@ export const useWorkoutStore = create<WorkoutState>()(
       resetData: () => set({
         exercises: [],
         sessions: [],
+        plans: [],
         stats: { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
         currentSession: null,
         activeGoal: null
       })
     }),
     {
-      name: 'workout-storage', 
+      name: 'workout-storage',
+      version: 1,
+      // Схема v1 добавила планы тренировок: у старых сохранений их просто нет.
+      migrate: (persistedState, version) => {
+        const state = persistedState as Partial<WorkoutState>;
+        if (version < 1) {
+          return {
+            ...state,
+            plans: Array.isArray(state.plans) ? state.plans : [],
+          } as WorkoutState;
+        }
+        return state as WorkoutState;
+      },
     }
   )
 );

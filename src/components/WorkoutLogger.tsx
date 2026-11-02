@@ -74,7 +74,14 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onFinish }) => {
   return (
     <div className="space-y-6 animate-in fade-in pb-10">
       <div className="flex justify-between items-center mt-4">
-        <h2 className="text-2xl font-bold">Тренировка</h2>
+        <div>
+          <h2 className="text-2xl font-bold">Тренировка</h2>
+          {currentSession.planName && (
+            <p className="text-xs text-textMuted mt-1">
+              По плану: <span className="text-primary font-semibold">{currentSession.planName}</span>
+            </p>
+          )}
+        </div>
       </div>
 
       {currentSession.entries.length === 0 ? (

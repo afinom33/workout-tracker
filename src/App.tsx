@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
-import { Activity, Dumbbell, LineChart, Settings, ListChecks } from 'lucide-react';
+import { Activity, CalendarDays, Dumbbell, LineChart, Settings, ListChecks } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import WorkoutLogger from './components/WorkoutLogger';
 import ProgressCharts from './components/ProgressCharts';
 import ExportData from './components/ExportData';
 import ExerciseList from './components/ExerciseList';
+import WorkoutPlans from './components/WorkoutPlans';
 import { useWorkoutStore } from './store/useWorkoutStore';
 
 import { Moon, Sun } from 'lucide-react';
 
-type View = 'dashboard' | 'workout' | 'progress' | 'exercises' | 'settings';
+type View = 'dashboard' | 'workout' | 'plans' | 'progress' | 'exercises' | 'settings';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -51,6 +52,7 @@ function App() {
         <div className="max-w-3xl mx-auto w-full p-4 md:p-6">
           {currentView === 'dashboard' && <Dashboard onStartWorkout={() => setCurrentView('workout')} />}
           {currentView === 'workout' && <WorkoutLogger onFinish={() => setCurrentView('dashboard')} />}
+          {currentView === 'plans' && <WorkoutPlans onStartWorkout={() => setCurrentView('workout')} />}
           {currentView === 'progress' && <ProgressCharts />}
           {currentView === 'exercises' && <ExerciseList />}
           {currentView === 'settings' && <ExportData />}
@@ -59,7 +61,7 @@ function App() {
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 w-full glass-panel border-t-0 pb-safe z-50">
-        <div className="max-w-3xl mx-auto flex justify-around p-3 relative">
+        <div className="max-w-3xl mx-auto flex justify-around p-2 relative">
           <NavItem 
             icon={<Activity size={22} />} 
             label="Обзор" 
@@ -72,6 +74,12 @@ function App() {
             isActive={currentView === 'workout'} 
             onClick={() => handleNavigation('workout')}
             hasIndicator={!!currentSession}
+          />
+          <NavItem 
+            icon={<CalendarDays size={22} />} 
+            label="Планы" 
+            isActive={currentView === 'plans'} 
+            onClick={() => handleNavigation('plans')} 
           />
           <NavItem 
             icon={<ListChecks size={22} />} 
@@ -101,7 +109,7 @@ function NavItem({ icon, label, isActive, onClick, hasIndicator }: { icon: React
   return (
     <button 
       onClick={onClick}
-      className={`flex flex-col items-center justify-center w-full p-2 relative ${
+      className={`flex flex-col items-center justify-center w-full px-0.5 py-2 relative ${
         isActive ? 'text-primary' : 'text-textMuted hover:text-textMain'
       } transition-colors`}
     >
@@ -109,7 +117,7 @@ function NavItem({ icon, label, isActive, onClick, hasIndicator }: { icon: React
         <span className="absolute top-1 right-1/4 w-2 h-2 bg-primary rounded-full animate-pulse"></span>
       )}
       {icon}
-      <span className="text-[10px] mt-1 font-medium">{label}</span>
+      <span className="text-[9px] sm:text-[10px] mt-1 font-medium truncate max-w-full">{label}</span>
     </button>
   );
 }

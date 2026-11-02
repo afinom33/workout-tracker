@@ -190,7 +190,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onStartWorkout }) => {
                 className="w-full text-left glass-panel p-5 rounded-3xl flex justify-between items-center transition-transform hover:scale-[1.02] hover:bg-white/5"
               >
                 <div>
-                  <div className="font-bold text-lg text-textMain">Тренировка</div>
+                  <div className="font-bold text-lg text-textMain">{session.planName ?? 'Тренировка'}</div>
                   <div className="text-sm text-textMuted">
                     {formatDistanceToNow(new Date(session.date), { addSuffix: true, locale: ru })}
                   </div>
@@ -212,6 +212,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onStartWorkout }) => {
             <div className="p-5 border-b border-panelBorder flex justify-between items-center sticky top-0 bg-background/95 backdrop-blur z-10">
               <div>
                 <h3 className="font-bold text-xl text-textMain">Детали тренировки</h3>
+                {selectedSession.planName && (
+                  <div className="text-xs text-primary font-semibold mt-0.5">
+                    По плану: {selectedSession.planName}
+                  </div>
+                )}
                 <div className="text-xs text-textMuted mt-0.5">
                   {new Date(selectedSession.date).toLocaleString('ru-RU')} • {selectedSession.durationMinutes} мин
                 </div>
