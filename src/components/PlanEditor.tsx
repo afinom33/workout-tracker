@@ -1,138 +1,195 @@
 import React, { useState } from 'react';
-import { Check, Plus, Trash2, X } from 'lucide-react';
+import { Plus, Save, Trash2, X } from 'lucide-react';
 import { useWorkoutStore } from '../store/useWorkoutStore';
-import { WEEKDAY_LABELS, WEEKDAY_ORDER } from '../utils/workoutPlanCsv';
-import type { PlannedSet, Weekday, WorkoutPlan } from '../types';
+import {
+  WEEKDAY_LABELS,
+  WEEKDAY_ORDER,
+  parseWeekday,
+} from '../utils/workoutPlanCsv';
+import type { PlannedExercise, PlannedSet, Weekday, WorkoutPlan } from '../types';
 
 interface PlanEditorProps {
   plan: WorkoutPlan;
   onClose: () => void;
 }
 
-/** Редактирование шаблона: название, день, состав упражнений и плановые подходы. */
+interface DraftSet {
+  id: string;
+  weight: string;
+  reps: string;
+  note?: string;
+}
+
+interface DraftExercise {
+  id: string;
+  exerciseId: string;
+  sets: DraftSet[];
+}
+
+const newId = () => crypto.randomUUID();
+
+const toDraftSets = (sets: PlannedSet[]): DraftSet[] =>
+  [...sets]
+    .sort((a, b) => a.order - b.order)
+    .map((set) => ({
+      id: newId(),
+      weight: String(set.weight),
+      reps: String(set.reps),
+      ...(set.note ? { note: set.note } : {}),
+    }));
+
+const toDraftExercises = (plan: WorkoutPlan): DraftExercise[] =>
+  [...plan.exercises]
+    .sort((a, b) => a.order - b.order)
+    .map((exercise) => ({
+      id: newId(),
+      exerciseId: exercise.exerciseId,
+      sets: toDraftSets(exercise.sets),
+    }));
+
+const parseNumber = (value: string) => Number(value.trim().replace(',', '.'));
+
 const PlanEditor: React.FC<PlanEditorProps> = ({ plan, onClose }) => {
   const exercises = useWorkoutStore((state) => state.exercises);
   const updatePlan = useWorkoutStore((state) => state.updatePlan);
 
-  const [draft, setDraft] = useState<WorkoutPlan>(() => JSON.parse(JSON.stringify(plan)) as WorkoutPlan);
-  const [newExerciseId, setNewExerciseId] = useState('');
+  const [name, setName] = useState(plan.name);
+  const [week, setWeek] = useState(String(plan.week));
+  const [day, setDay] = useState<Weekday>(plan.day);
+  const [draft, setDraft] = useState<DraftExercise[]>(() => toDraftExercises(plan));
   const [error, setError] = useState<string | null>(null);
 
-  const exerciseName = (exerciseId: string) =>
-    exercises.find((exercise) => exercise.id === exerciseId)?.name ?? 'Удалённое упражнение';
-
-  const patchSet = (exerciseId: string, setId: string, patch: Partial<PlannedSet>) => {
-    setDraft((current) => ({
+  const addExercise = (exerciseId: string) => {
+    setDraft((current) => [
       ...current,
-      exercises: current.exercises.map((exercise) =>
-        exercise.id === exerciseId
-          ? {
-              ...exercise,
-              sets: exercise.sets.map((set) => (set.id === setId ? { ...set, ...patch } : set)),
-            }
-          : exercise,
-      ),
-    }));
+      { id: newId(), exerciseId, sets: [{ id: newId(), weight: '0', reps: '10' }] },
+    ]);
+  };
+
+  const removeExercise = (id: string) => {
+    setDraft((current) => current.filter((exercise) => exercise.id !== id));
   };
 
   const addSet = (exerciseId: string) => {
-    setDraft((current) => ({
-      ...current,
-      exercises: current.exercises.map((exercise) => {
-        if (exercise.id !== exerciseId) return exercise;
-        const lastSet = exercise.sets[exercise.sets.length - 1];
-        return {
-          ...exercise,
-          sets: [
-            ...exercise.sets,
-            {
-              id: crypto.randomUUID(),
-              weight: lastSet ? lastSet.weight : 0,
-              reps: lastSet ? lastSet.reps : 10,
-              order: exercise.sets.length + 1,
-            },
-          ],
-        };
-      }),
-    }));
+    setDraft((current) =>
+      current.map((exercise) =>
+        exercise.id === exerciseId
+          ? {
+              ...exercise,
+              sets: [...exercise.sets, { id: newId(), weight: '0', reps: '10' }],
+            }
+          : exercise,
+      ),
+    );
   };
 
   const removeSet = (exerciseId: string, setId: string) => {
-    setDraft((current) => ({
-      ...current,
-      exercises: current.exercises.map((exercise) =>
+    setDraft((current) =>
+      current.map((exercise) =>
         exercise.id === exerciseId
           ? { ...exercise, sets: exercise.sets.filter((set) => set.id !== setId) }
           : exercise,
       ),
-    }));
+    );
   };
 
-  const removeExercise = (exerciseId: string) => {
-    setDraft((current) => ({
-      ...current,
-      exercises: current.exercises.filter((exercise) => exercise.id !== exerciseId),
-    }));
-  };
-
-  const addExercise = () => {
-    const exercise = exercises.find((candidate) => candidate.id === newExerciseId);
-    if (!exercise) return;
-    setDraft((current) => ({
-      ...current,
-      exercises: [
-        ...current.exercises,
-        {
-          id: crypto.randomUUID(),
-          exerciseId: exercise.id,
-          order: current.exercises.length + 1,
-          sets: [{ id: crypto.randomUUID(), weight: 0, reps: 10, order: 1 }],
-        },
-      ],
-    }));
-    setNewExerciseId('');
+  const updateSet = (exerciseId: string, setId: string, patch: Partial<DraftSet>) => {
+    setDraft((current) =>
+      current.map((exercise) =>
+        exercise.id === exerciseId
+          ? {
+              ...exercise,
+              sets: exercise.sets.map((set) =>
+                set.id === setId ? { ...set, ...patch } : set,
+              ),
+            }
+          : exercise,
+      ),
+    );
   };
 
   const handleSave = () => {
-    const name = draft.name.trim();
-    if (name === '') {
-      setError('Название тренировки не может быть пустым.');
+    const trimmedName = name.trim();
+    const weekNumber = Number(week);
+
+    if (!trimmedName) {
+      setError('Укажите название тренировки.');
       return;
     }
-    if (draft.exercises.length === 0) {
-      setError('В тренировке должно остаться хотя бы одно упражнение.');
+    if (!Number.isInteger(weekNumber) || weekNumber < 1) {
+      setError('Номер недели должен быть целым числом от 1.');
       return;
     }
-    if (draft.exercises.some((exercise) => exercise.sets.length === 0)) {
-      setError('В каждом упражнении должен остаться хотя бы один подход.');
+    if (!parseWeekday(day)) {
+      setError('Выберите день недели.');
+      return;
+    }
+    if (draft.length === 0) {
+      setError('Добавьте хотя бы одно упражнение.');
+      return;
+    }
+    if (draft.some((exercise) => exercise.sets.length === 0)) {
+      setError('У каждого упражнения должен быть хотя бы один подход.');
       return;
     }
 
-    updatePlan({
-      ...draft,
-      name,
-      exercises: draft.exercises.map((exercise, exerciseIndex) => ({
-        ...exercise,
-        order: exerciseIndex + 1,
-        sets: exercise.sets.map((set, setIndex) => ({
-          ...set,
-          weight: Number.isFinite(set.weight) ? Math.max(0, set.weight) : 0,
-          reps: Number.isFinite(set.reps) ? Math.max(1, Math.round(set.reps)) : 1,
+    const result: PlannedExercise[] = [];
+
+    for (const [exerciseIndex, exercise] of draft.entries()) {
+      const sets: PlannedSet[] = [];
+
+      for (const [setIndex, set] of exercise.sets.entries()) {
+        const weight = parseNumber(set.weight);
+        const reps = Number(set.reps.trim());
+
+        if (!Number.isFinite(weight) || weight < 0) {
+          setError('Вес должен быть числом не меньше 0.');
+          return;
+        }
+        if (!Number.isInteger(reps) || reps < 1) {
+          setError('Количество повторений должно быть целым числом от 1.');
+          return;
+        }
+
+        sets.push({
+          id: newId(),
+          weight,
+          reps,
           order: setIndex + 1,
-        })),
-      })),
+          ...(set.note ? { note: set.note } : {}),
+        });
+      }
+
+      result.push({
+        id: exercise.id,
+        exerciseId: exercise.exerciseId,
+        order: exerciseIndex + 1,
+        sets,
+      });
+    }
+
+    updatePlan({
+      ...plan,
+      name: trimmedName,
+      week: weekNumber,
+      day,
+      exercises: result,
     });
     onClose();
   };
 
+  const availableExercises = exercises.filter(
+    (exercise) => !draft.some((item) => item.exerciseId === exercise.id),
+  );
+
   return (
     <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-      <div className="glass-panel w-full max-w-lg rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div className="glass-panel w-full max-w-lg rounded-3xl p-5 space-y-4 max-h-[88vh] flex flex-col">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold">Редактировать тренировку</h3>
             <p className="text-xs text-textMuted mt-1">
-              Изменения затронут только шаблон, история тренировок останется прежней.
+              Изменения затронут только шаблон, история останется прежней.
             </p>
           </div>
           <button
@@ -144,130 +201,153 @@ const PlanEditor: React.FC<PlanEditorProps> = ({ plan, onClose }) => {
           </button>
         </div>
 
-        <div className="space-y-3">
-          <label className="block">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="space-y-1 col-span-2">
             <span className="text-xs text-textMuted">Название</span>
             <input
-              value={draft.name}
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-              className="mt-1 w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-textMain outline-none focus:border-primary"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+              placeholder="Например, Ноги"
             />
           </label>
-
-          <label className="block">
-            <span className="text-xs text-textMuted">День недели</span>
+          <label className="space-y-1">
+            <span className="text-xs text-textMuted">Неделя</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={week}
+              onChange={(event) => setWeek(event.target.value)}
+              className="w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-textMuted">День</span>
             <select
-              value={draft.day}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, day: event.target.value as Weekday }))
-              }
-              className="mt-1 w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-textMain outline-none focus:border-primary"
+              value={day}
+              onChange={(event) => setDay(event.target.value as Weekday)}
+              className="w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
             >
-              {WEEKDAY_ORDER.map((day) => (
-                <option key={day} value={day}>
-                  {WEEKDAY_LABELS[day]}
+              {WEEKDAY_ORDER.map((weekday) => (
+                <option key={weekday} value={weekday}>
+                  {WEEKDAY_LABELS[weekday]}
                 </option>
               ))}
             </select>
           </label>
         </div>
 
-        <div className="space-y-3">
-          {draft.exercises.map((exercise, exerciseIndex) => (
-            <div key={exercise.id} className="bg-element rounded-2xl p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold text-sm">
-                  {exerciseIndex + 1}. {exerciseName(exercise.exerciseId)}
-                </p>
+        <div className="space-y-3 overflow-y-auto pr-1">
+          {draft.length === 0 && (
+            <p className="text-sm text-textMuted text-center py-4">
+              Добавьте упражнения из справочника.
+            </p>
+          )}
+
+          {draft.map((exercise, exerciseIndex) => {
+            const exerciseName =
+              exercises.find((item) => item.id === exercise.exerciseId)?.name ??
+              'Удалённое упражнение';
+
+            return (
+              <div key={exercise.id} className="bg-element rounded-2xl p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold">
+                    {exerciseIndex + 1}. {exerciseName}
+                  </p>
+                  <button
+                    onClick={() => removeExercise(exercise.id)}
+                    className="p-1.5 rounded-full text-textMuted hover:text-dangerText transition-colors"
+                    aria-label="Удалить упражнение"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {exercise.sets.map((set, setIndex) => (
+                    <div key={set.id} className="flex items-center gap-2">
+                      <span className="text-[11px] text-textMuted w-5 text-center">
+                        {setIndex + 1}
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.5"
+                        inputMode="decimal"
+                        value={set.weight}
+                        onChange={(event) =>
+                          updateSet(exercise.id, set.id, { weight: event.target.value })
+                        }
+                        className="w-20 bg-background border border-panelBorder rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary"
+                        aria-label="Вес"
+                      />
+                      <span className="text-xs text-textMuted">кг ×</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        inputMode="numeric"
+                        value={set.reps}
+                        onChange={(event) =>
+                          updateSet(exercise.id, set.id, { reps: event.target.value })
+                        }
+                        className="w-16 bg-background border border-panelBorder rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary"
+                        aria-label="Повторы"
+                      />
+                      <span className="text-xs text-textMuted">раз</span>
+                      <button
+                        onClick={() => removeSet(exercise.id, set.id)}
+                        className="p-1 rounded-full text-textMuted hover:text-dangerText transition-colors ml-auto"
+                        aria-label="Удалить подход"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
                 <button
-                  onClick={() => removeExercise(exercise.id)}
-                  className="p-1.5 rounded-lg text-textMuted hover:text-dangerText transition-colors"
-                  aria-label="Удалить упражнение"
+                  onClick={() => addSet(exercise.id)}
+                  className="text-xs font-semibold text-primary flex items-center gap-1 hover:opacity-80"
                 >
-                  <Trash2 size={16} />
+                  <Plus size={14} /> Добавить подход
                 </button>
               </div>
+            );
+          })}
 
-              <div className="space-y-1.5">
-                {exercise.sets.map((set, setIndex) => (
-                  <div key={set.id} className="flex items-center gap-2">
-                    <span className="text-xs text-textMuted w-4">{setIndex + 1}</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step={0.5}
-                      value={set.weight}
-                      onChange={(event) =>
-                        patchSet(exercise.id, set.id, { weight: Number(event.target.value) })
-                      }
-                      className="w-20 bg-background border border-panelBorder rounded-lg px-2 py-1 text-sm text-textMain outline-none focus:border-primary"
-                      aria-label="Вес, кг"
-                    />
-                    <span className="text-xs text-textMuted">кг ×</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      step={1}
-                      value={set.reps}
-                      onChange={(event) =>
-                        patchSet(exercise.id, set.id, { reps: Number(event.target.value) })
-                      }
-                      className="w-16 bg-background border border-panelBorder rounded-lg px-2 py-1 text-sm text-textMain outline-none focus:border-primary"
-                      aria-label="Повторы"
-                    />
-                    <button
-                      onClick={() => removeSet(exercise.id, set.id)}
-                      className="ml-auto p-1 text-textMuted hover:text-dangerText transition-colors"
-                      aria-label="Удалить подход"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                onClick={() => addSet(exercise.id)}
-                className="text-xs text-primary font-semibold flex items-center gap-1"
-              >
-                <Plus size={14} /> Добавить подход
-              </button>
-            </div>
-          ))}
+          <div className="space-y-1">
+            <span className="text-xs text-textMuted">Добавить упражнение</span>
+            <select
+              value=""
+              onChange={(event) => {
+                if (event.target.value) addExercise(event.target.value);
+              }}
+              className="w-full bg-background border border-panelBorder rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+            >
+              <option value="">Выберите упражнение…</option>
+              {availableExercises.map((exercise) => (
+                <option key={exercise.id} value={exercise.id}>
+                  {exercise.name} ({exercise.muscleGroup})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <select
-            value={newExerciseId}
-            onChange={(event) => setNewExerciseId(event.target.value)}
-            className="flex-1 bg-background border border-panelBorder rounded-xl px-3 py-2 text-sm text-textMain outline-none focus:border-primary"
-          >
-            <option value="">Добавить упражнение…</option>
-            {exercises.map((exercise) => (
-              <option key={exercise.id} value={exercise.id}>
-                {exercise.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={addExercise}
-            disabled={!newExerciseId}
-            className="px-3 rounded-xl bg-element hover:bg-elementHover text-textMain font-bold disabled:opacity-50"
-            aria-label="Добавить упражнение"
-          >
-            <Plus size={18} />
-          </button>
-        </div>
-
-        {error && <p className="text-sm text-dangerText">{error}</p>}
+        {error && (
+          <p className="text-sm text-dangerText bg-dangerText/10 border border-dangerText/30 rounded-xl px-3 py-2">
+            {error}
+          </p>
+        )}
 
         <button
           onClick={handleSave}
           className="w-full bg-primary text-primaryText font-bold py-3 rounded-xl flex items-center justify-center gap-2"
         >
-          <Check size={20} /> Сохранить
+          <Save size={20} /> Сохранить
         </button>
       </div>
     </div>

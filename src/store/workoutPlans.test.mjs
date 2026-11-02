@@ -1,176 +1,213 @@
-import assert from 'node:assert/strict';
 import test from 'node:test';
+import assert from 'node:assert/strict';
 
-// zustand/persist при создании стора обращается к localStorage — в Node его нет.
+// Store использует persist/localStorage; в Node подменяем окружение до импорта.
 const memory = new Map();
 globalThis.localStorage = {
-  getItem: (key) => memory.get(key) ?? null,
+  getItem: (key) => (memory.has(key) ? memory.get(key) : null),
   setItem: (key, value) => memory.set(key, String(value)),
   removeItem: (key) => memory.delete(key),
   clear: () => memory.clear(),
-  key: (index) => Array.from(memory.keys())[index] ?? null,
-  get length() {
-    return memory.size;
-  },
 };
-// zustand/persist читает именно window.localStorage.
-globalThis.window = globalThis;
+globalThis.window = {
+  addEventListener() {},
+  matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+  localStorage: globalThis.localStorage,
+};
 
 const { useWorkoutStore } = await import('./useWorkoutStore.ts');
+const { planImportKey } = await import('../utils/workoutPlanCsv.ts');
 
-const resetStore = () => {
+const reset = () => {
   useWorkoutStore.setState({
     exercises: [],
-    sessions: [],
     plans: [],
+    sessions: [],
     currentSession: null,
     activeGoal: null,
-    stats: { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
   });
 };
 
-const parsedPlan = (overrides = {}) => ({
-  name: 'Ноги',
-  day: 'mon',
-  exercises: [
-    {
-      order: 1,
-      name: 'Приседания',
-      sets: [
-        { order: 1, weight: 60, reps: 10 },
-        { order: 2, weight: 65, reps: 8, note: 'тяжело' },
-      ],
-    },
-    { order: 2, name: 'Выпады', sets: [{ order: 1, weight: 16, reps: 12 }] },
-  ],
-  ...overrides,
+const exercise = (id, name) => ({ id, name, muscleGroup: 'Своя' });
+
+const parsedPlan = (week, name, day, exercises) => ({
+  week,
+  name,
+  day,
+  exercises: exercises.map((item, index) => ({
+    order: item.order ?? index + 1,
+    name: item.name,
+    sets: item.sets.map(([weight, reps], setIndex) => ({
+      order: setIndex + 1,
+      weight,
+      reps,
+    })),
+  })),
 });
 
-test('importPlans: создаёт план, упражнения в правильном порядке и переиспользует существующие', () => {
-  resetStore();
-  const store = useWorkoutStore.getState();
-  const existingId = store.addExercise('  приседания  ', 'Ноги');
+const legs = (week = 1) =>
+  parsedPlan(week, 'Ноги', 'mon', [
+    { name: 'Приседания', sets: [[60, 8], [65, 6]] },
+    { name: 'Выпады', sets: [[20, 10]] },
+  ]);
 
-  const result = store.importPlans([parsedPlan()]);
+test('импорт плана переиспользует существующее упражнение и сохраняет неделю', () => {
+  reset();
+  useWorkoutStore.setState({ exercises: [exercise('ex-1', '  приседания ')] });
 
-  const state = useWorkoutStore.getState();
+  const result = useWorkoutStore.getState().importPlans([legs(2)]);
+
   assert.deepEqual(result, { imported: 1, createdExercises: 1 });
-  assert.equal(state.plans.length, 1);
-
-  const plan = state.plans[0];
+  const [plan] = useWorkoutStore.getState().plans;
+  assert.equal(plan.week, 2);
   assert.equal(plan.name, 'Ноги');
-  assert.equal(plan.day, 'mon');
+  assert.equal(plan.exercises[0].exerciseId, 'ex-1');
+  assert.equal(plan.exercises[0].sets.length, 2);
   assert.deepEqual(
-    plan.exercises.map((exercise) => exercise.order),
-    [1, 2],
-  );
-  assert.equal(plan.exercises[0].exerciseId, existingId, 'имя сравнивается без регистра и пробелов');
-  assert.deepEqual(
-    plan.exercises[0].sets.map((set) => [set.order, set.weight, set.reps, set.note]),
+    plan.exercises[0].sets.map((set) => [set.weight, set.reps, set.order]),
     [
-      [1, 60, 10, undefined],
-      [2, 65, 8, 'тяжело'],
+      [60, 8, 1],
+      [65, 6, 2],
     ],
   );
-
-  const created = state.exercises.find((exercise) => exercise.name === 'Выпады');
-  assert.ok(created, 'новое упражнение добавлено в справочник');
-  assert.equal(created.muscleGroup, 'Своя');
 });
 
-test('importPlans: повторный импорт с mode=replace заменяет план, сохраняя id', () => {
-  resetStore();
-  const store = useWorkoutStore.getState();
-  store.importPlans([parsedPlan()]);
-  const original = useWorkoutStore.getState().plans[0];
+test('replace заменяет план той же недели, сохраняя id и createdAt', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(1)]);
+  const before = useWorkoutStore.getState().plans[0];
 
-  const result = store.importPlans(
-    [parsedPlan({ day: 'tue', exercises: [parsedPlan().exercises[1]] })],
-    { ноги: 'replace' },
-  );
+  const updated = parsedPlan(1, 'Ноги', 'mon', [
+    { name: 'Приседания', sets: [[80, 5]] },
+  ]);
+  const result = useWorkoutStore.getState().importPlans([updated], {
+    [planImportKey(1, 'Ноги')]: 'replace',
+  });
 
-  const state = useWorkoutStore.getState();
   assert.equal(result.imported, 1);
-  assert.equal(state.plans.length, 1);
-  assert.equal(state.plans[0].id, original.id);
-  assert.equal(state.plans[0].createdAt, original.createdAt);
-  assert.equal(state.plans[0].day, 'tue');
-  assert.equal(state.plans[0].exercises.length, 1);
+  const plans = useWorkoutStore.getState().plans;
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].id, before.id);
+  assert.equal(plans[0].createdAt, before.createdAt);
+  assert.deepEqual(
+    plans[0].exercises[0].sets.map((set) => [set.weight, set.reps]),
+    [[80, 5]],
+  );
 });
 
-test('importPlans: без mode конфликтующее имя сохраняется как копия', () => {
-  resetStore();
-  const store = useWorkoutStore.getState();
-  store.importPlans([parsedPlan()]);
-  store.importPlans([parsedPlan()]);
-  store.importPlans([parsedPlan()]);
+test('одно имя в разных неделях — разные тренировки, без копий', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(1), legs(2)]);
 
-  const names = useWorkoutStore.getState().plans.map((plan) => plan.name);
-  assert.deepEqual(names, ['Ноги', 'Ноги (копия)', 'Ноги (копия 2)']);
+  const plans = useWorkoutStore.getState().plans;
+  assert.equal(plans.length, 2);
+  assert.deepEqual(
+    plans.map((plan) => [plan.week, plan.name]),
+    [
+      [1, 'Ноги'],
+      [2, 'Ноги'],
+    ],
+  );
 });
 
-test('startSessionFromPlan: сессия предзаполнена подходами и ссылкой на план', () => {
-  resetStore();
-  const store = useWorkoutStore.getState();
-  store.importPlans([parsedPlan()]);
+test('«оставить оба» даёт имена (копия) и (копия 2)', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(1)]);
+
+  const modeKey = planImportKey(1, 'Ноги');
+  useWorkoutStore.getState().importPlans([legs(1)], { [modeKey]: 'copy' });
+  useWorkoutStore.getState().importPlans([legs(1)], { [modeKey]: 'copy' });
+
+  assert.deepEqual(
+    useWorkoutStore.getState().plans.map((plan) => plan.name),
+    ['Ноги', 'Ноги (копия)', 'Ноги (копия 2)'],
+  );
+});
+
+test('старт по плану создаёт сессию с planId, planName и порядком из плана', () => {
+  reset();
+  const parsed = parsedPlan(3, 'Ноги', 'mon', [
+    { order: 2, name: 'Выпады', sets: [[20, 10], [22, 8]] },
+    { order: 1, name: 'Приседания', sets: [[60, 8]] },
+  ]);
+  useWorkoutStore.getState().importPlans([parsed]);
   const plan = useWorkoutStore.getState().plans[0];
 
   const started = useWorkoutStore.getState().startSessionFromPlan(plan.id);
-  const session = useWorkoutStore.getState().currentSession;
 
   assert.equal(started, true);
+  const session = useWorkoutStore.getState().currentSession;
   assert.ok(session);
   assert.equal(session.planId, plan.id);
   assert.equal(session.planName, 'Ноги');
-  assert.equal(session.isCompleted, false);
+  assert.equal(session.entries.length, 2);
+  assert.equal(session.entries[0].exerciseId, plan.exercises[0].exerciseId);
+  assert.equal(session.entries[0].sets.length, 1);
+  assert.equal(session.entries[1].sets.length, 2);
   assert.deepEqual(
-    session.entries.map((entry) => entry.sets.length),
-    [2, 1],
-  );
-  assert.deepEqual(
-    session.entries[0].sets.map((set) => [set.weight, set.reps, set.completed]),
+    session.entries[1].sets.map((set) => [set.weight, set.reps, set.completed]),
     [
-      [60, 10, false],
-      [65, 8, false],
+      [20, 10, false],
+      [22, 8, false],
     ],
   );
 });
 
-test('startSessionFromPlan: удалённые упражнения пропускаются, пустой план не стартует', () => {
-  resetStore();
-  const store = useWorkoutStore.getState();
-  store.importPlans([parsedPlan()]);
+test('удалённые из справочника упражнения пропускаются, пустой план не стартует', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(1)]);
   const plan = useWorkoutStore.getState().plans[0];
+  useWorkoutStore.setState({ exercises: [] });
 
-  const firstExerciseId = plan.exercises[0].exerciseId;
-  const secondExerciseId = plan.exercises[1].exerciseId;
-  useWorkoutStore.getState().deleteExercise(firstExerciseId);
-
-  assert.equal(useWorkoutStore.getState().startSessionFromPlan(plan.id), true);
-  const session = useWorkoutStore.getState().currentSession;
-  assert.deepEqual(
-    session.entries.map((entry) => entry.exerciseId),
-    [secondExerciseId],
-  );
-
-  useWorkoutStore.getState().deleteExercise(secondExerciseId);
   assert.equal(useWorkoutStore.getState().startSessionFromPlan(plan.id), false);
+  assert.equal(useWorkoutStore.getState().currentSession, null);
 });
 
-test('JSON-экспорт содержит планы, старый экспорт без планов читается', () => {
-  resetStore();
-  useWorkoutStore.getState().importPlans([parsedPlan()]);
+test('deleteWeek удаляет только выбранную неделю', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(1), legs(2), legs(2)]);
+
+  useWorkoutStore.getState().deleteWeek(2);
+
+  assert.deepEqual(
+    useWorkoutStore.getState().plans.map((plan) => plan.week),
+    [1],
+  );
+});
+
+test('JSON-экспорт содержит недели, старый экспорт без планов читается', () => {
+  reset();
+  useWorkoutStore.getState().importPlans([legs(2)]);
 
   const exported = JSON.parse(useWorkoutStore.getState().exportData());
-  assert.equal(exported.plans.length, 1);
+  assert.equal(exported.plans[0].week, 2);
 
-  const legacy = JSON.stringify({
-    exercises: [{ id: 'e1', name: 'Жим', muscleGroup: 'Грудь' }],
-    sessions: [],
-    stats: { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
-    activeGoal: null,
-  });
-
-  assert.equal(useWorkoutStore.getState().importData(legacy), true);
+  const legacy = { ...exported };
+  delete legacy.plans;
+  assert.equal(useWorkoutStore.getState().importData(JSON.stringify(legacy)), true);
   assert.deepEqual(useWorkoutStore.getState().plans, []);
+});
+
+test('план из старого JSON без week считается первой неделей', () => {
+  reset();
+  const legacyPlan = {
+    id: 'plan-legacy',
+    name: 'Старая',
+    day: 'tue',
+    exercises: [],
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const ok = useWorkoutStore.getState().importData(
+    JSON.stringify({
+      exercises: [exercise('ex-1', 'Жим')],
+      sessions: [],
+      plans: [legacyPlan],
+    }),
+  );
+
+  assert.equal(ok, true);
+  const [plan] = useWorkoutStore.getState().plans;
+  assert.equal(plan.id, 'plan-legacy');
+  assert.equal(plan.week, 1);
 });

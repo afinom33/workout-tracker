@@ -62,9 +62,11 @@ export interface PlannedExercise {
   sets: PlannedSet[];
 }
 
-/** Шаблон (план) тренировки: например «Ноги» по понедельникам. */
+/** Шаблон (план) тренировки: например «Ноги» по понедельникам недели 1. */
 export interface WorkoutPlan {
   id: string;
+  /** Номер недели плана (≥ 1): тренировки группируются по неделям. */
+  week: number;
   name: string;
   day: Weekday;
   exercises: PlannedExercise[];

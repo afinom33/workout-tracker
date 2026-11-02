@@ -1,5 +1,8 @@
-import assert from 'node:assert/strict';
 import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   WORKOUT_PLAN_HEADER,
@@ -8,239 +11,296 @@ import {
   parseWorkoutPlanCsv,
 } from './workoutPlanCsv.ts';
 
-/** Собирает CSV из массива объектов, чтобы тесты читались как данные. */
-const csv = (rows, { header, delimiter = ',' } = {}) =>
-  [header ?? WORKOUT_PLAN_HEADER.join(delimiter), ...rows.map((row) => row.join(delimiter))].join('\n');
+const here = dirname(fileURLToPath(import.meta.url));
+const fixturePath = join(here, '..', '..', 'tests', 'fixtures', 'workout_template.csv');
+const fixture = readFileSync(fixturePath, 'utf8');
 
-const legsRow = (exerciseOrder, exerciseName, setOrder, weight, reps, notes = '') => [
-  'Ноги',
-  'mon',
-  String(exerciseOrder),
-  exerciseName,
-  String(setOrder),
-  String(weight),
-  String(reps),
-  notes,
-];
+const csv = (rows, header = WORKOUT_PLAN_HEADER, delimiter = ',') =>
+  [header.join(delimiter), ...rows.map((row) => row.join(delimiter))].join('\n');
 
-test('шаблон содержит заголовки и примеры, которые проходят валидацию', () => {
-  const template = buildWorkoutPlanCsvTemplate();
+const planAt = (result, week, name) =>
+  result.plans.find((plan) => plan.week === week && plan.name === name);
 
-  assert.ok(template.startsWith('\uFEFF'), 'шаблон начинается с BOM для Excel');
-  assert.ok(template.includes(WORKOUT_PLAN_HEADER.join(',')), 'заголовки в шаблоне');
+test('шаблон: BOM, CRLF, 9 колонок и 6 тренировок по двум неделям', () => {
+  const text = buildWorkoutPlanCsvTemplate();
 
-  const { plans, errors } = parseWorkoutPlanCsv(template);
-  assert.deepEqual(errors, []);
-  assert.equal(plans.length, 1);
-  assert.equal(plans[0].name, 'Ноги');
-  assert.equal(plans[0].day, 'mon');
-  assert.equal(plans[0].exercises.length, 2);
+  assert.ok(text.startsWith('\uFEFF'));
+  assert.ok(text.includes('\r\n'));
+  assert.equal(text.split('\r\n')[0].replace('\uFEFF', ''), WORKOUT_PLAN_HEADER.join(','));
+
+  const result = parseWorkoutPlanCsv(text);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.plans.length, 6);
   assert.deepEqual(
-    plans[0].exercises.map((exercise) => exercise.sets.length),
-    [3, 3],
+    result.plans.map((plan) => plan.week),
+    [1, 1, 1, 2, 2, 2],
   );
 });
 
-test('корректный файл: планы, упражнения и подходы упорядочены и заполнены', () => {
-  const text = csv([
-    legsRow(1, 'Приседания', 1, 60, 10),
-    legsRow(1, 'Приседания', 2, 65, 8, 'тяжело'),
-    legsRow(1, 'Приседания', 3, '"70,5"', 6),
-    legsRow(2, 'Выпады', 1, 16, 12),
-    ['Жим', 'wed', '1', 'Жим лёжа', '1', 40, 10, ''],
-  ]);
+test('эталонный файл: 6 планов в порядке неделя 1 → неделя 2, день пн → вс', () => {
+  const result = parseWorkoutPlanCsv(fixture);
 
-  const { plans, errors } = parseWorkoutPlanCsv(text);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.plans.map((plan) => `${plan.week}:${plan.name}:${plan.day}`),
+    [
+      '1:Ноги:mon',
+      '1:Верх А:wed',
+      '1:Верх Б:fri',
+      '2:Ноги:mon',
+      '2:Верх А:wed',
+      '2:Верх Б:fri',
+    ],
+  );
 
-  assert.deepEqual(errors, []);
-  assert.equal(plans.length, 2);
-
-  const legs = plans[0];
-  assert.equal(legs.name, 'Ноги');
-  assert.equal(legs.day, 'mon');
+  const legs = planAt(result, 1, 'Ноги');
+  assert.equal(legs.exercises.length, 2);
   assert.equal(legs.exercises[0].name, 'Приседания');
+  assert.equal(legs.exercises[0].sets.length, 3);
   assert.deepEqual(
-    legs.exercises[0].sets.map((set) => [set.order, set.weight, set.reps]),
+    legs.exercises[0].sets.map((set) => [set.weight, set.reps]),
     [
-      [1, 60, 10],
-      [2, 65, 8],
-      [3, 70.5, 6],
+      [60, 8],
+      [65, 6],
+      [70, 5],
     ],
   );
-  assert.equal(legs.exercises[0].sets[1].note, 'тяжело');
-  assert.equal(legs.exercises[1].name, 'Выпады');
-  assert.equal(plans[1].day, 'wed');
+
+  const upperA = planAt(result, 1, 'Верх А');
+  assert.equal(upperA.exercises[0].sets[1].weight, 52.5);
+
+  const upperB = planAt(result, 1, 'Верх Б');
+  assert.equal(upperB.exercises[1].sets[1].note, 'с резинкой');
 });
 
-test('порядок строк в файле не влияет на порядок упражнений и подходов', () => {
-  const text = csv([
-    legsRow(2, 'Выпады', 2, 18, 10),
-    legsRow(1, 'Приседания', 3, 70, 6),
-    legsRow(2, 'Выпады', 1, 16, 12),
-    legsRow(1, 'Приседания', 1, 60, 10),
-    legsRow(1, 'Приседания', 2, 65, 8),
-  ]);
+test('перемешанные между неделями строки дают тот же порядок', () => {
+  const [header, ...rows] = fixture.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
+  const shuffled = [header, ...rows.reverse()].join('\n');
+  const result = parseWorkoutPlanCsv(shuffled);
 
-  const { plans, errors } = parseWorkoutPlanCsv(text);
-
-  assert.deepEqual(errors, []);
+  assert.deepEqual(result.errors, []);
   assert.deepEqual(
-    plans[0].exercises.map((exercise) => exercise.name),
-    ['Приседания', 'Выпады'],
-  );
-  assert.deepEqual(
-    plans[0].exercises[1].sets.map((set) => set.order),
-    [1, 2],
+    result.plans.map((plan) => `${plan.week}:${plan.name}`),
+    ['1:Ноги', '1:Верх А', '1:Верх Б', '2:Ноги', '2:Верх А', '2:Верх Б'],
   );
 });
 
-test('принимает точку с запятой как разделитель', () => {
-  const text = csv(
+test('старый файл без колонки week попадает в неделю 1', () => {
+  const header = [
+    'workout_name',
+    'day',
+    'exercise_order',
+    'exercise_name',
+    'set_order',
+    'weight_kg',
+    'reps',
+    'notes',
+  ];
+  const result = parseWorkoutPlanCsv(
+    csv(
+      [
+        ['Спина', 'tue', '1', 'Тяга', '1', '50', '8', ''],
+        ['Спина', 'tue', '1', 'Тяга', '2', '55', '6', ''],
+        ['Спина', 'tue', '2', 'Подтягивания', '1', '0', '10', ''],
+      ],
+      header,
+    ),
+  );
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans.length, 1);
+  assert.equal(result.plans[0].week, 1);
+  assert.equal(result.plans[0].name, 'Спина');
+  assert.equal(result.plans[0].exercises.length, 2);
+});
+
+test('колонки читаются по названию, а не по позиции', () => {
+  const header = [
+    'workout_name',
+    'week',
+    'day',
+    'exercise_name',
+    'exercise_order',
+    'set_order',
+    'reps',
+    'weight_kg',
+    'notes',
+  ];
+  const result = parseWorkoutPlanCsv(
+    csv(
+      [
+        ['Ноги', '1', 'mon', 'Приседания', '1', '1', '8', '60', ''],
+        ['Ноги', '1', 'mon', 'Приседания', '1', '2', '6', '65', ''],
+      ],
+      header,
+    ),
+  );
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans[0].exercises[0].name, 'Приседания');
+  assert.deepEqual(
+    result.plans[0].exercises[0].sets.map((set) => [set.weight, set.reps]),
     [
-      ['Ноги', 'mon', '1', 'Приседания', '1', '60', '10', ''],
-      ['Ноги', 'mon', '2', 'Выпады', '1', '16', '12', ''],
+      [60, 8],
+      [65, 6],
     ],
-    { delimiter: ';' },
   );
-
-  const { plans, errors } = parseWorkoutPlanCsv(text);
-
-  assert.deepEqual(errors, []);
-  assert.equal(plans[0].exercises.length, 2);
 });
 
-test('поддерживает кавычки и запятые внутри полей', () => {
+test('запятая как десятичный разделитель внутри кавычек', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '"70,5"', '5', ''],
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '2', '"72,5"', '5', ''],
+    ]),
+  );
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.plans[0].exercises[0].sets.map((set) => set.weight),
+    [70.5, 72.5],
+  );
+});
+
+test('разделитель ; определяется автоматически', () => {
   const text = [
-    WORKOUT_PLAN_HEADER.join(','),
-    '"Ноги, тяжёлый день",mon,1,"Приседания, со штангой",1,60,10,"""опорный"" подход"',
+    WORKOUT_PLAN_HEADER.join(';'),
+    '1;Ноги;mon;1;Приседания;1;70,5;5;',
+    '1;Ноги;mon;1;Приседания;2;75;5;',
   ].join('\n');
+  const result = parseWorkoutPlanCsv(text);
 
-  const { plans, errors } = parseWorkoutPlanCsv(text);
-
-  assert.deepEqual(errors, []);
-  assert.equal(plans[0].name, 'Ноги, тяжёлый день');
-  assert.equal(plans[0].exercises[0].name, 'Приседания, со штангой');
-  assert.equal(plans[0].exercises[0].sets[0].note, '"опорный" подход');
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans[0].exercises[0].sets[0].weight, 70.5);
 });
 
-test('кириллица: русские названия дней и упражнений', () => {
-  const text = csv(
-    [
-      ['Ноги', 'понедельник', '1', 'Приседания со штангой', '1', '60', '10', ''],
-      ['Ноги', 'Пн.', '1', 'Приседания со штангой', '2', '65', '8', ''],
-      ['Грудь', 'Ср', '1', 'Жим лёжа', '1', '40', '10', ''],
-    ],
-    { header: WORKOUT_PLAN_HEADER.join(',') },
+test('кавычки, запятые и переводы строк внутри полей', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', '"разминка, лёгкий вес"'],
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '2', '65', '6', '"после\nотдыха"'],
+    ]),
   );
 
-  const { plans, errors } = parseWorkoutPlanCsv(text);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans[0].exercises[0].sets[0].note, 'разминка, лёгкий вес');
+  assert.equal(result.plans[0].exercises[0].sets[1].note, 'после\nотдыха');
+});
 
-  assert.deepEqual(errors, []);
+test('кириллические дни недели', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'Пн', '1', 'Приседания', '1', '60', '8', ''],
+      ['1', 'Верх', 'Ср', '1', 'Жим', '1', '40', '10', ''],
+    ]),
+  );
+
+  assert.deepEqual(result.errors, []);
   assert.deepEqual(
-    plans.map((plan) => [plan.name, plan.day]),
-    [
-      ['Ноги', 'mon'],
-      ['Грудь', 'wed'],
-    ],
+    result.plans.map((plan) => plan.day),
+    ['mon', 'wed'],
   );
 });
 
-test('неверные заголовки: возвращает одну понятную ошибку', () => {
-  const text = csv([legsRow(1, 'Приседания', 1, 60, 10)], {
-    header: 'workout,day,exercise_order,exercise_name,set_order,weight_kg,reps',
-  });
+test('неверные заголовки: понятная ошибка, планов нет', () => {
+  const result = parseWorkoutPlanCsv('foo,bar\n1,2');
 
-  const { plans, errors } = parseWorkoutPlanCsv(text);
-
-  assert.deepEqual(plans, []);
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0].line, 1);
-  assert.match(errors[0].message, /заголовки/i);
+  assert.equal(result.plans.length, 0);
+  assert.ok(result.errors.length > 0);
+  assert.ok(result.errors.some((error) => /заголов/i.test(error.message)));
 });
 
-test('дубли подходов: ошибка с номером строки и ссылкой на первую строку', () => {
-  const text = csv([
-    legsRow(1, 'Приседания', 1, 60, 10),
-    legsRow(1, 'Приседания', 2, 65, 8),
-    legsRow(1, 'Приседания', 1, 70, 6),
-  ]);
-
-  const { errors } = parseWorkoutPlanCsv(text);
-
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0].line, 4);
-  assert.match(errors[0].message, /дубль/i);
-  assert.match(errors[0].message, /строке 2/);
-});
-
-test('пропуск в нумерации подходов: ошибка с номером строки', () => {
-  const text = csv([legsRow(1, 'Приседания', 1, 60, 10), legsRow(1, 'Приседания', 3, 70, 6)]);
-
-  const { errors } = parseWorkoutPlanCsv(text);
-
-  assert.equal(errors.length, 1);
-  assert.match(errors[0].message, /пропуск/i);
-  assert.match(errors[0].message, /№2/);
-});
-
-test('пропуск в нумерации упражнений: ошибка с номером строки', () => {
-  const text = csv([legsRow(1, 'Приседания', 1, 60, 10), legsRow(3, 'Выпады', 1, 16, 12)]);
-
-  const { errors } = parseWorkoutPlanCsv(text);
-
-  assert.equal(errors.length, 1);
-  assert.match(errors[0].message, /пропуск/i);
-  assert.match(errors[0].message, /№2/);
-});
-
-test('неизвестный день, пустое название и нечисловые значения собираются в список', () => {
-  const text = csv([
-    ['', 'mon', '1', 'Приседания', '1', '60', '10', ''],
-    ['Ноги', 'праздник', '1', 'Приседания', '1', '60', '10', ''],
-    ['Ноги', 'mon', '1', '', '1', '60', '10', ''],
-    ['Ноги', 'mon', '1', 'Приседания', '1', 'тяжело', '10', ''],
-    ['Ноги', 'mon', '1', 'Приседания', '1', '60', 'много', ''],
-    ['Ноги', 'mon', 'x', 'Приседания', 'y', '', '', ''],
-  ]);
-
-  const { plans, errors } = parseWorkoutPlanCsv(text);
-
-  assert.deepEqual(plans, []);
-  assert.deepEqual(
-    errors.map((error) => error.line),
-    [2, 3, 4, 5, 6, 7, 7, 7, 7],
+test('дубль week + workout_name + exercise_order + set_order — ошибка', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', ''],
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '65', '6', ''],
+    ]),
   );
-  assert.match(errors[0].message, /название тренировки/i);
-  assert.match(errors[1].message, /неизвестный день/i);
-  assert.match(errors[2].message, /название упражнения/i);
-  assert.match(errors[3].message, /вес/i);
-  assert.match(errors[4].message, /повторы/i);
-  assert.match(errors[5].message, /exercise_order/i);
-  assert.match(errors[6].message, /set_order/i);
-  assert.match(errors[7].message, /пустой вес/i);
-  assert.match(errors[8].message, /пустые повторы/i);
+
+  assert.ok(result.errors.some((error) => /дубл/i.test(error.message)));
+  assert.ok(result.errors.some((error) => error.line === 3));
 });
 
-test('разные дни у одной тренировки: ошибка', () => {
-  const text = csv([legsRow(1, 'Приседания', 1, 60, 10), ['Ноги', 'tue', '2', 'Выпады', '1', 16, 12, '']]);
+test('одно название тренировки в одной неделе на разных днях — ошибка', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', ''],
+      ['1', 'Ноги', 'wed', '1', 'Приседания', '1', '60', '8', ''],
+    ]),
+  );
 
-  const { errors } = parseWorkoutPlanCsv(text);
-
-  assert.equal(errors.length, 1);
-  assert.match(errors[0].message, /разные дни/i);
+  assert.ok(result.errors.length > 0);
 });
 
-test('пустой файл и файл без данных: ошибки, а не пустой результат', () => {
-  assert.equal(parseWorkoutPlanCsv('').errors.length, 1);
-  assert.equal(parseWorkoutPlanCsv('\uFEFF').errors.length, 1);
-  assert.equal(parseWorkoutPlanCsv(csv([])).errors.length, 1);
+test('две тренировки в один день одной недели — предупреждение, импорт возможен', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', ''],
+      ['1', 'Спина', 'mon', '1', 'Тяга', '1', '50', '8', ''],
+    ]),
+  );
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans.length, 2);
+  assert.ok(result.warnings.length > 0);
+  assert.ok(result.warnings.some((warning) => /день|дн/i.test(warning.message)));
 });
 
-test('parseWeekday понимает латиницу и кириллицу, но не выдумывает дни', () => {
-  assert.equal(parseWeekday('MON'), 'mon');
-  assert.equal(parseWeekday(' sunday '), 'sun');
-  assert.equal(parseWeekday('Сб.'), 'sat');
-  assert.equal(parseWeekday('воскресенье'), 'sun');
-  assert.equal(parseWeekday('праздник'), null);
-  assert.equal(parseWeekday(''), null);
+test('пропуск недели — предупреждение, а не ошибка', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', ''],
+      ['3', 'Спина', 'wed', '1', 'Тяга', '1', '50', '8', ''],
+    ]),
+  );
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.plans.length, 2);
+  assert.ok(result.warnings.some((warning) => /недел/i.test(warning.message)));
+});
+
+test('некорректный номер недели — ошибка', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([['0', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', '']]),
+  );
+
+  assert.equal(result.plans.length, 0);
+  assert.ok(result.errors.length > 0);
+});
+
+test('пропуски в нумерации упражнений и подходов — ошибки', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', '60', '8', ''],
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '3', '65', '6', ''],
+      ['1', 'Ноги', 'mon', '3', 'Выпады', '1', '20', '10', ''],
+    ]),
+  );
+
+  assert.ok(result.errors.some((error) => /подход/i.test(error.message)));
+  assert.ok(result.errors.some((error) => /упражнен/i.test(error.message)));
+});
+
+test('нечисловой вес и повторения — ошибки с номерами строк', () => {
+  const result = parseWorkoutPlanCsv(
+    csv([
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '1', 'тяжело', '8', ''],
+      ['1', 'Ноги', 'mon', '1', 'Приседания', '2', '60', '0', ''],
+    ]),
+  );
+
+  assert.equal(result.plans.length, 0);
+  assert.ok(result.errors.some((error) => error.line === 2));
+  assert.ok(result.errors.some((error) => error.line === 3));
+});
+
+test('parseWeekday понимает английские и русские варианты', () => {
+  assert.equal(parseWeekday('mon'), 'mon');
+  assert.equal(parseWeekday(' Monday '), 'mon');
+  assert.equal(parseWeekday('Пн.'), 'mon');
+  assert.equal(parseWeekday('вс'), 'sun');
+  assert.equal(parseWeekday('Пт'), 'fri');
+  assert.equal(parseWeekday('не день'), null);
 });

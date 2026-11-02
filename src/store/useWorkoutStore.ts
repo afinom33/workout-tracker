@@ -10,10 +10,23 @@ import type {
   MuscleGroup,
   WorkoutPlan,
 } from '../types';
-import { normalizeExerciseName, normalizePlanName } from '../utils/workoutPlanCsv.ts';
+import { normalizeExerciseName, planImportKey } from '../utils/workoutPlanCsv.ts';
 import type { ParsedWorkoutPlan } from '../utils/workoutPlanCsv.ts';
 
 export type ImportPlanMode = 'replace' | 'copy';
+
+/** Старые сохранения/экспорты не знали недель: считаем такие планы первой неделей. */
+const normalizeStoredPlans = (value: unknown): WorkoutPlan[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((rawPlan) => {
+    const plan = rawPlan as WorkoutPlan;
+    const week =
+      typeof plan.week === 'number' && Number.isFinite(plan.week) && plan.week >= 1
+        ? Math.round(plan.week)
+        : 1;
+    return { ...plan, week };
+  });
+};
 
 export interface ImportPlansResult {
   imported: number;
@@ -46,6 +59,8 @@ interface WorkoutState {
   startSessionFromPlan: (planId: string) => boolean;
   updatePlan: (plan: WorkoutPlan) => void;
   deletePlan: (planId: string) => void;
+  /** Удаляет все планы одной недели: «убрать неделю» одним действием. */
+  deleteWeek: (week: number) => void;
   
   // Helpers
   getLastPerformance: (exerciseId: string) => { maxWeight: number; maxReps: number } | null;
@@ -278,12 +293,13 @@ export const useWorkoutStore = create<WorkoutState>()(
             return created.id;
           };
 
-          const takenNames = new Set(plans.map((plan) => normalizePlanName(plan.name)));
+          // Тренировка определяется парой (week, workout_name).
+          const takenKeys = new Set(plans.map((plan) => planImportKey(plan.week, plan.name)));
 
-          const uniqueCopyName = (name: string) => {
+          const uniqueCopyName = (week: number, name: string) => {
             let candidate = `${name} (копия)`;
             let counter = 2;
-            while (takenNames.has(normalizePlanName(candidate))) {
+            while (takenKeys.has(planImportKey(week, candidate))) {
               candidate = `${name} (копия ${counter})`;
               counter += 1;
             }
@@ -291,6 +307,8 @@ export const useWorkoutStore = create<WorkoutState>()(
           };
 
           parsedPlans.forEach((parsed) => {
+            const week = Number.isFinite(parsed.week) ? Math.max(1, Math.round(parsed.week)) : 1;
+
             const builtExercises = [...parsed.exercises]
               .sort((a, b) => a.order - b.order)
               .map((exercise) => ({
@@ -308,30 +326,34 @@ export const useWorkoutStore = create<WorkoutState>()(
                   })),
               }));
 
-            const normalizedName = normalizePlanName(parsed.name);
+            const key = planImportKey(week, parsed.name);
             const existingIndex = plans.findIndex(
-              (plan) => normalizePlanName(plan.name) === normalizedName,
+              (plan) => plan.week === week && planImportKey(plan.week, plan.name) === key,
             );
-            const mode = modes[normalizedName];
+            const mode = modes[key];
 
             if (mode === 'replace' && existingIndex >= 0) {
               plans[existingIndex] = {
                 ...plans[existingIndex],
+                week,
                 name: parsed.name.trim(),
                 day: parsed.day,
                 exercises: builtExercises,
               };
             } else {
               let name = parsed.name.trim();
-              if (takenNames.has(normalizedName)) name = uniqueCopyName(name);
+              if (takenKeys.has(planImportKey(week, name))) {
+                name = uniqueCopyName(week, name);
+              }
               plans.push({
                 id: crypto.randomUUID(),
+                week,
                 name,
                 day: parsed.day,
                 exercises: builtExercises,
                 createdAt: new Date().toISOString(),
               });
-              takenNames.add(normalizePlanName(name));
+              takenKeys.add(planImportKey(week, name));
             }
 
             imported += 1;
@@ -388,6 +410,10 @@ export const useWorkoutStore = create<WorkoutState>()(
 
       deletePlan: (planId) => set((state) => ({
         plans: state.plans.filter((plan) => plan.id !== planId)
+      })),
+
+      deleteWeek: (week) => set((state) => ({
+        plans: state.plans.filter((plan) => plan.week !== week)
       })),
 
       setGoal: (type, startWeight, endDate) => set(() => ({
@@ -490,8 +516,9 @@ export const useWorkoutStore = create<WorkoutState>()(
             set({
               exercises: data.exercises,
               sessions: data.sessions,
-              // Старые экспорты без планов остаются валидными.
-              plans: Array.isArray(data.plans) ? data.plans : [],
+              // Старые экспорты без планов остаются валидными, а планы без
+              // недели из экспорта версии 1 считаются первой неделей.
+              plans: normalizeStoredPlans(data.plans),
               stats: data.stats || { streak: 0, lastWorkoutDate: null, totalWorkouts: 0 },
               activeGoal: data.activeGoal || null
             });
@@ -514,17 +541,14 @@ export const useWorkoutStore = create<WorkoutState>()(
     }),
     {
       name: 'workout-storage',
-      version: 1,
-      // Схема v1 добавила планы тренировок: у старых сохранений их просто нет.
-      migrate: (persistedState, version) => {
+      version: 2,
+      // v1 добавила планы, v2 — номер недели у плана. Старые планы относятся к неделе 1.
+      migrate: (persistedState) => {
         const state = persistedState as Partial<WorkoutState>;
-        if (version < 1) {
-          return {
-            ...state,
-            plans: Array.isArray(state.plans) ? state.plans : [],
-          } as WorkoutState;
-        }
-        return state as WorkoutState;
+        return {
+          ...state,
+          plans: normalizeStoredPlans(state.plans),
+        } as WorkoutState;
       },
     }
   )
